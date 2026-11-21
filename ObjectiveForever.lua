@@ -878,7 +878,7 @@ local function BlizzFrames()
 end
 
 -- right edge that keeps clear of the side action bars (and anything else docked on the right)
-local SIDE_BARS = { "MultiBarRight", "MultiBarLeft", "MultiBar5", "MultiBar6", "MultiBar7" }
+local SIDE_BARS = { "MultiBarRight", "MultiBarLeft" } -- action bar 4 and bar 5 only
 local function RightEdge()
   local edge = UIParent:GetRight() or 0
   local us = UIParent:GetEffectiveScale() or 1
