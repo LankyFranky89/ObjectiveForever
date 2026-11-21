@@ -1,6 +1,6 @@
 -- Objective Forever: replaces the default objective tracker.
 -- Quests, Professions (tracked recipes) and - when QuestMates is installed - Party Quests.
--- Click a quest = read it, right-click = show it on the map, click the quest icon = in-world marker.
+-- Click a quest = track it (diamond + 3D arrow), click again = untrack, Ctrl-click = map, right-click = quest log.
 -- QuestMates is optional: party features use it when it's there, otherwise these stand-ins are used
 local hold = nil
 local NOQM = {
@@ -49,6 +49,7 @@ local blizzParent = {}
 local pinnedOwn -- quest id I pinned from the tracker
 local Place -- defined further down
 local Untrack -- defined further down
+local STGet, STSet, Arrow3D -- defined further down
 local QuestTimeEnd -- defined further down
 local ProgressColor, CHECK -- defined further down
 local scrollOff, viewH = 0, 600 -- pixels scrolled down, visible list height
@@ -123,7 +124,7 @@ end)
 head:SetScript("OnEnter", function(s)
   GameTooltip:SetOwner(s, "ANCHOR_LEFT"); GameTooltip:AddLine("Objective Forever")
   GameTooltip:AddLine("Shift-drag to move.", 1, 1, 1)
-  GameTooltip:AddLine("Click a quest to show it on the map, right-click to open it in the quest log.", 1, 1, 1, true)
+  GameTooltip:AddLine("Click a quest to track it (diamond + arrow), click again to untrack. Right-click for the quest log, Ctrl-click for the map.", 1, 1, 1, true)
   GameTooltip:AddLine("Click the quest icon to point the in-world marker at it.", 1, 1, 1, true)
   GameTooltip:Show()
 end)
@@ -378,6 +379,34 @@ Untrack = function(qid)
   QuestMatesTracker_Refresh()
 end
 
+-- super tracking (the in-world diamond): modern C_SuperTrack, or the older global functions
+STGet = function()
+  if C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID then
+    local ok, v = pcall(C_SuperTrack.GetSuperTrackedQuestID); if ok and v then return v end
+  end
+  if GetSuperTrackedQuestID then local ok, v = pcall(GetSuperTrackedQuestID); if ok then return v end end
+end
+STSet = function(id)
+  local done = false
+  if C_SuperTrack and C_SuperTrack.SetSuperTrackedQuestID then done = pcall(C_SuperTrack.SetSuperTrackedQuestID, id) end
+  if SetSuperTrackedQuestID then done = pcall(SetSuperTrackedQuestID, id) or done end
+  -- nav CVar only if this client has it
+  if id and id > 0 and GetCVar and GetCVar("showInGameNavigation") == "0" then pcall(SetCVar, "showInGameNavigation", "1") end
+  return done
+end
+
+-- the 3D arrow Quest Ledger Forever uses: Rally Point's if installed, otherwise Quest Ledger's own
+Arrow3D = function(qid)
+  if QuestLedgerForever_ArrowOff and QuestLedgerForever_ArrowOff() then return end
+  if qid then
+    if RallyPoint_FollowQuest then pcall(RallyPoint_FollowQuest, qid)
+    elseif QLF_OwnArrow then pcall(QLF_OwnArrow, qid) end
+  else
+    if RallyPoint_StopFollow then pcall(RallyPoint_StopFollow) end
+    if QLF_HideArrow then pcall(QLF_HideArrow) end
+  end
+end
+
 local function TogglePin(q, who, keepOn)
   local key, hold = API.Pinned()
   if who then
@@ -392,19 +421,22 @@ local function TogglePin(q, who, keepOn)
     end
     API.PinFriend(who, fq)
   else
-    local cur = C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID and C_SuperTrack.GetSuperTrackedQuestID()
-    if hold and cur == q.id then
+    if hold and pinnedOwn == q.id then
       if keepOn then return end
+      -- untrack: diamond and 3D arrow off
+      pinnedOwn = nil
       API.Unpin()
-      if C_SuperTrack and C_SuperTrack.SetSuperTrackedQuestID then pcall(C_SuperTrack.SetSuperTrackedQuestID, 0) end
+      STSet(0)
+      Arrow3D(nil)
+      QuestMatesTracker_Refresh()
       return
     end
-    if not (C_SuperTrack and C_SuperTrack.SetSuperTrackedQuestID) then return end
     API.Unpin()
     if C_Map and C_Map.ClearUserWaypoint then pcall(C_Map.ClearUserWaypoint) end
-    pcall(C_SuperTrack.SetSuperTrackedQuestID, q.id)
-    API.HoldPointer(true); pinnedOwn = q.id
-    if SetCVar and GetCVar and GetCVar("showInGameNavigation") ~= "1" then pcall(SetCVar, "showInGameNavigation", "1") end
+    pinnedOwn = q.id
+    STSet(q.id)
+    API.HoldPointer(true)
+    Arrow3D(q.id)
   end
   QuestMatesTracker_Refresh()
 end
@@ -412,9 +444,7 @@ end
 local function IsPinned(q, who)
   local key, hold = API.Pinned()
   if who then return key == (who .. ":" .. q.id) end
-  if not hold then return false end
-  local cur = C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID and C_SuperTrack.GetSuperTrackedQuestID()
-  return cur == q.id
+  return hold and pinnedOwn == q.id or false
 end
 
 ------------------------------------------------------------------------
@@ -489,8 +519,8 @@ local function GetLine()
         -- my quest: my quest log (Quest Ledger Forever); friend's quest: the QuestMates reader
         API.OpenQuest(d.q, d.who, d.who ~= nil)
       else
-        TogglePin(d.q, d.who, true) -- point the in-world marker at this quest
-        ShowOnMap(d.q, d.who)
+        if IsControlKeyDown() then ShowOnMap(d.q, d.who)  -- Ctrl-click: the map
+        else TogglePin(d.q, d.who) end                     -- click: track (diamond + 3D arrow), click again: untrack
       end
     end)
     l:SetScript("OnEnter", function(b)
@@ -504,7 +534,7 @@ local function GetLine()
         GameTooltip:Show()
       elseif d and d.q then
         b.fs:SetTextColor(1, 1, 1)
-        if d.who then API.QuestTooltip(b, d.q, d.who, "Click for the map - right-click to read it")
+        if d.who then API.QuestTooltip(b, d.q, d.who, "Click to track/untrack - right-click to read it - Ctrl-click for the map")
         else
           GameTooltip:SetOwner(b, "ANCHOR_LEFT")
           GameTooltip:AddLine(string.format("[%d] %s", d.q.level or 0, d.q.title), 1, 0.82, 0)
@@ -514,7 +544,7 @@ local function GetLine()
             for _, o in ipairs(fr.objs) do if o.need and o.need > 0 then prog[#prog + 1] = o.have .. "/" .. o.need end end
             GameTooltip:AddLine(fr.who .. ": " .. (fr.complete and "done" or table.concat(prog, " ")), c[1], c[2], c[3])
           end
-          GameTooltip:AddLine("Click for the map - right-click for the quest log", 0.5, 0.8, 1)
+          GameTooltip:AddLine("Click to track/untrack - right-click for the quest log - Ctrl-click for the map", 0.5, 0.8, 1)
           GameTooltip:AddLine("Shift-click to stop tracking", 0.5, 0.8, 1)
           GameTooltip:Show()
         end
@@ -1027,9 +1057,11 @@ ev:SetScript("OnEvent", function(_, e)
   end
   if e == "SUPER_TRACKING_CHANGED" and pinnedOwn then
     local _, hold = API.Pinned()
-    local cur = C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID and C_SuperTrack.GetSuperTrackedQuestID()
-    if hold and cur ~= pinnedOwn then API.Unpin() end
-    if cur ~= pinnedOwn then pinnedOwn = nil end
+    local cur = STGet()
+    if cur ~= nil and cur ~= pinnedOwn then
+      if hold then API.Unpin() end
+      pinnedOwn = nil
+    end
   end
   if e == "PLAYER_REGEN_ENABLED" then
     if pendingApply then QuestMatesTracker_Apply() end
@@ -1070,9 +1102,12 @@ SlashCmdList.QUESTMATESTRACKER = function(msg)
     return
   end
   if msg == "debug" then
-    local st = C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID and C_SuperTrack.GetSuperTrackedQuestID()
+    local st = STGet()
     local wp = C_SuperTrack and C_SuperTrack.IsSuperTrackingUserWaypoint and C_SuperTrack.IsSuperTrackingUserWaypoint()
     local key, hold = API.Pinned()
+    print((P .. "api: C_SuperTrack %s, C get %s, C set %s, old get %s, old set %s"):format(tostring(C_SuperTrack ~= nil),
+      tostring(C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID ~= nil), tostring(C_SuperTrack and C_SuperTrack.SetSuperTrackedQuestID ~= nil),
+      tostring(GetSuperTrackedQuestID ~= nil), tostring(SetSuperTrackedQuestID ~= nil)))
     print((P .. "marker: quest %s, waypoint %s, nav %s, pinned %s/%s, frame %s"):format(tostring(st), tostring(wp),
       tostring(GetCVar and GetCVar("showInGameNavigation")), tostring(key), tostring(hold),
       tostring(SuperTrackedFrame and SuperTrackedFrame:IsShown())))

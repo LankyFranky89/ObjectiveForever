@@ -2,7 +2,7 @@
 ## Title: Objective Forever
 ## Notes: Replaces the default quest tracker: your quests, tracked recipes with reagent counts and - with QuestMates - your party's quests.
 ## Author: Frank
-## Version: 1.0.1
+## Version: 1.0.2
 ## OptionalDeps: QuestMates, QuestLedgerForever
 ## SavedVariables: ObjectiveForeverDB
 
