@@ -378,19 +378,23 @@ Untrack = function(qid)
   QuestMatesTracker_Refresh()
 end
 
-local function TogglePin(q, who)
+local function TogglePin(q, who, keepOn)
   local key, hold = API.Pinned()
   if who then
-    if key == (who .. ":" .. q.id) then API.Unpin() return end
+    if key == (who .. ":" .. q.id) then
+      if not keepOn then API.Unpin() end
+      return
+    end
     local fq = API.FriendQuest(who, q.id)
     if not (fq and fq.pois and #fq.pois > 0) then
-      DEFAULT_CHAT_FRAME:AddMessage(P .. "No location known for " .. who .. "'s " .. q.title .. " yet.")
+      if not keepOn then DEFAULT_CHAT_FRAME:AddMessage(P .. "No location known for " .. who .. "'s " .. q.title .. " yet.") end
       return
     end
     API.PinFriend(who, fq)
   else
     local cur = C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID and C_SuperTrack.GetSuperTrackedQuestID()
     if hold and cur == q.id then
+      if keepOn then return end
       API.Unpin()
       if C_SuperTrack and C_SuperTrack.SetSuperTrackedQuestID then pcall(C_SuperTrack.SetSuperTrackedQuestID, 0) end
       return
@@ -485,6 +489,7 @@ local function GetLine()
         -- my quest: my quest log (Quest Ledger Forever); friend's quest: the QuestMates reader
         API.OpenQuest(d.q, d.who, d.who ~= nil)
       else
+        TogglePin(d.q, d.who, true) -- point the in-world marker at this quest
         ShowOnMap(d.q, d.who)
       end
     end)
@@ -1065,6 +1070,12 @@ SlashCmdList.QUESTMATESTRACKER = function(msg)
     return
   end
   if msg == "debug" then
+    local st = C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID and C_SuperTrack.GetSuperTrackedQuestID()
+    local wp = C_SuperTrack and C_SuperTrack.IsSuperTrackingUserWaypoint and C_SuperTrack.IsSuperTrackingUserWaypoint()
+    local key, hold = API.Pinned()
+    print((P .. "marker: quest %s, waypoint %s, nav %s, pinned %s/%s, frame %s"):format(tostring(st), tostring(wp),
+      tostring(GetCVar and GetCVar("showInGameNavigation")), tostring(key), tostring(hold),
+      tostring(SuperTrackedFrame and SuperTrackedFrame:IsShown())))
     local us = UIParent:GetEffectiveScale() or 1
     print((P .. "screen right %.0f, tracker right %.0f, bar edge %.0f, saved spot: %s"):format(
       UIParent:GetRight() or 0, (f:GetRight() or 0) * (f:GetEffectiveScale() or 1) / us, RightEdge(), db.utPos and "yes" or "no"))
