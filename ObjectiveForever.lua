@@ -49,6 +49,7 @@ local blizzParent = {}
 local pinnedOwn -- quest id I pinned from the tracker
 local Place -- defined further down
 local Untrack -- defined further down
+local QuestTimeEnd -- defined further down
 local ProgressColor, CHECK -- defined further down
 local scrollOff, viewH = 0, 600 -- pixels scrolled down, visible list height
 local barHold = 0 -- seconds before the scroll bar fades
@@ -273,7 +274,28 @@ local function ShortText(idx)
   end
 end
 
+-- timed quests: GetTime() at which the timer runs out, or nil
+local timerByIndex = {}
+local function ReadTimers()
+  wipe(timerByIndex)
+  if GetQuestTimers and GetQuestIndexForTimer then
+    local t = { GetQuestTimers() }
+    for i, left in ipairs(t) do
+      local idx = GetQuestIndexForTimer(i)
+      if idx and tonumber(left) then timerByIndex[idx] = GetTime() + tonumber(left) end
+    end
+  end
+end
+QuestTimeEnd = function(qid, idx)
+  if C_QuestLog and C_QuestLog.GetTimeAllowed then
+    local ok, total, elapsed = pcall(C_QuestLog.GetTimeAllowed, qid)
+    if ok and total and elapsed and total > 0 and total > elapsed then return GetTime() + (total - elapsed) end
+  end
+  return idx and timerByIndex[idx] or nil
+end
+
 local function MyQuests()
+  ReadTimers()
   local list = {}
   local logFlag
   local function add(qid, title, level, complete, idx)
@@ -287,7 +309,7 @@ local function MyQuests()
       complete = all or (logFlag and true or false)
     end
     list[#list + 1] = { id = qid, title = title or ("Quest " .. qid), level = level or 0, complete = complete and true or false,
-      objs = objs, desc = (#objs == 0 and not complete) and ShortText(idx) or nil, tag = Tag(qid) }
+      objs = objs, desc = (#objs == 0 and not complete) and ShortText(idx) or nil, tag = Tag(qid), timeEnd = QuestTimeEnd(qid, idx) }
   end
   if C_QuestLog and C_QuestLog.GetNumQuestLogEntries and C_QuestLog.GetInfo then
     for i = 1, (C_QuestLog.GetNumQuestLogEntries() or 0) do
@@ -712,6 +734,15 @@ local function QuestBlock(q, who, extra)
   if not Line("GameFontNormal", name .. (extra or ""), 4, r, g, b, { q = q, who = who },
     q.complete and ICON_DONE or ICON_PROGRESS, IsPinned(q, who), nil, nil, kb .. "t") then return false end
   seen[owner] = seen[owner] or {}
+  if q.timeEnd then
+    local left = math.max(0, q.timeEnd - GetTime())
+    local txt = string.format("|TInterface\\Icons\\INV_Misc_PocketWatch_01:12:12:0:0:64:64:6:58:6:58|t %d:%02d", math.floor(left / 60), math.floor(left % 60))
+    local tr, tg, tb = 1, 1, 1
+    if left < 15 then
+      if math.floor(GetTime() * 2) % 2 == 0 then tr, tg, tb = 1, 0.15, 0.15 else tr, tg, tb = 0.6, 0.05, 0.05 end
+    elseif left < 60 then tr, tg, tb = 1, 0.55, 0.1 end
+    Line("GameFontHighlightSmall", txt, 24, tr, tg, tb, nil, nil, nil, nil, nil, kb .. "timer")
+  end
   if q.complete then
     Line("GameFontHighlightSmall", "- Ready for turn-in", 24, 0.3, 1, 0.3, nil, nil, nil, nil, nil, kb .. "d")
     local now = { done = true }
@@ -745,6 +776,7 @@ end
 -- Refresh
 ------------------------------------------------------------------------
 local function Enabled() return db and db.unifiedTracker ~= false end
+local anyTimer = false
 
 function QuestMatesTracker_Refresh()
   if not Enabled() then f:Hide() return end
@@ -770,8 +802,18 @@ function QuestMatesTracker_Refresh()
   if db.utMin then y = -26 end
   if not db.utMin and not db.utSecMin then
     if tab == "mine" then
+      anyTimer = false
       local qs = MyQuests()
       NoteProgress("me", qs); TopFirst("me", qs)
+      -- running timers always on top
+      local timed, rest = {}, {}
+      for _, q in ipairs(qs) do if q.timeEnd and not q.complete then timed[#timed + 1] = q else rest[#rest + 1] = q end end
+      if #timed > 0 then
+        table.sort(timed, function(a, b) return a.timeEnd < b.timeEnd end)
+        for _, q in ipairs(rest) do timed[#timed + 1] = q end
+        qs = timed
+      end
+      anyTimer = #timed > 0
       if #qs == 0 then Line("GameFontHighlightSmall", "No tracked quests", 4, 0.6, 0.6, 0.6) end
       for i, q in ipairs(qs) do
         local shared = inParty and #API.FriendsOnQuest(q.id) or 0
@@ -829,7 +871,7 @@ end
 ------------------------------------------------------------------------
 local function BlizzFrames()
   local out = {}
-  for _, name in ipairs({ "ObjectiveTrackerFrame", "QuestWatchFrame", "WatchFrame" }) do
+  for _, name in ipairs({ "ObjectiveTrackerFrame", "QuestWatchFrame", "WatchFrame", "QuestTimerFrame" }) do
     if _G[name] then out[#out + 1] = _G[name] end
   end
   return out
@@ -916,6 +958,16 @@ end
 ------------------------------------------------------------------------
 -- Events
 ------------------------------------------------------------------------
+local tickT = 0
+local ticker = CreateFrame("Frame")
+ticker:SetScript("OnUpdate", function(_, el)
+  if not anyTimer then return end
+  tickT = tickT + el
+  if tickT < 0.5 then return end
+  tickT = 0
+  QuestMatesTracker_Refresh()
+end)
+
 local pending = false
 local function Soon()
   if pending then return end
@@ -931,7 +983,7 @@ ev:RegisterEvent("QUEST_WATCH_UPDATE")
 ev:RegisterEvent("SUPER_TRACKING_CHANGED")
 ev:RegisterEvent("GROUP_ROSTER_UPDATE")
 ev:RegisterEvent("PLAYER_REGEN_ENABLED")
-for _, e in ipairs({ "TRACKED_RECIPE_UPDATE", "BAG_UPDATE_DELAYED", "GET_ITEM_INFO_RECEIVED" }) do pcall(ev.RegisterEvent, ev, e) end
+for _, e in ipairs({ "QUEST_TIMER_STARTED", "TRACKED_RECIPE_UPDATE", "BAG_UPDATE_DELAYED", "GET_ITEM_INFO_RECEIVED" }) do pcall(ev.RegisterEvent, ev, e) end
 for _, e in ipairs({ "UI_SCALE_CHANGED", "DISPLAY_SIZE_CHANGED", "CVAR_UPDATE" }) do pcall(ev.RegisterEvent, ev, e) end
 ev:SetScript("OnEvent", function(_, e)
   if e == "PLAYER_LOGIN" then
