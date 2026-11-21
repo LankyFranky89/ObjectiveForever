@@ -407,9 +407,17 @@ local function GetLine()
     l.icon = CreateFrame("Button", nil, l)
     l.icon:SetSize(16, 16); l.icon:SetPoint("TOPLEFT", 0, 1)
     l.icon.tex = l.icon:CreateTexture(nil, "ARTWORK"); l.icon.tex:SetAllPoints()
-    l.icon.glow = l.icon:CreateTexture(nil, "OVERLAY")
-    l.icon.glow:SetTexture("Interface\\Buttons\\CheckButtonHilight"); l.icon.glow:SetBlendMode("ADD")
-    l.icon.glow:SetPoint("TOPLEFT", -3, 3); l.icon.glow:SetPoint("BOTTOMRIGHT", 3, -3)
+    -- selected (marker) quest: small arrow in front + a fading highlight behind the row
+    l.icon.glow = l.icon:CreateTexture(nil, "OVERLAY") -- kept for compatibility, never shown
+    l.icon.glow:Hide()
+    l.sel = l:CreateTexture(nil, "BACKGROUND", nil, -1)
+    l.sel:SetTexture("Interface\\Buttons\\WHITE8X8")
+    l.sel:SetPoint("TOPLEFT", -6, 2); l.sel:SetPoint("BOTTOMRIGHT", 0, -2)
+    l.sel:Hide()
+    l.arrow = l:CreateTexture(nil, "OVERLAY")
+    l.arrow:SetTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
+    l.arrow:SetSize(12, 12); l.arrow:SetPoint("RIGHT", l, "TOPLEFT", -1, -8)
+    l.arrow:Hide()
     l.icon:SetScript("OnClick", function(b)
       local d = b:GetParent().data
       if d and d.q then TogglePin(d.q, d.who) elseif d and d.recipe then b:GetParent():Click("LeftButton") end
@@ -510,10 +518,24 @@ local function Line(font, text, indent, r, g, b, data, icon, pinned, flashEnd, p
   l.r, l.g, l.b = r, g, b; l.fs:SetTextColor(r, g, b)
   l.fs:ClearAllPoints()
   l.fs:SetPoint("TOPLEFT", icon and 20 or 0, 0); l.fs:SetPoint("RIGHT", l, "RIGHT", 0, 0)
+  -- selected look: gold for my quests, the friend's color for party quests
+  if pinned then
+    local c = (data and data.who) and API.Color(data.who) or { 1, 0.82, 0 }
+    if l.sel.SetGradient and CreateColor then
+      l.sel:SetVertexColor(1, 1, 1, 1)
+      l.sel:SetGradient("HORIZONTAL", CreateColor(c[1], c[2], c[3], 0.35), CreateColor(c[1], c[2], c[3], 0))
+    else
+      l.sel:SetVertexColor(c[1], c[2], c[3], 0.25)
+    end
+    l.arrow:SetVertexColor(c[1], c[2], c[3])
+    l.sel:Show(); l.arrow:Show()
+  else
+    l.sel:Hide(); l.arrow:Hide()
+  end
   if icon then
     l.icon.tex:SetTexture(icon); l.icon.tex:SetTexCoord(0, 1, 0, 1)
     if data and data.recipe then l.icon.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
-    l.icon.glow:SetShown(pinned and true or false); l.icon:Show()
+    l.icon:Show()
   else l.icon:Hide() end
   l:ClearAllPoints()
   l:SetPoint("TOPLEFT", f, "TOPLEFT", indent, y + scrollOff); l:SetPoint("RIGHT", f, "RIGHT", -10, 0)
