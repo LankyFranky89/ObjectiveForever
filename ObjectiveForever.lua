@@ -499,6 +499,16 @@ local function GetLine()
     l.flash:SetPoint("TOPLEFT", -6, 2); l.flash:SetPoint("BOTTOMRIGHT", 4, -2); l.flash:SetAlpha(0)
     l.flashEnd = 0
     l:SetScript("OnUpdate", function(b)
+      if b.slideStart then
+        local t = (GetTime() - b.slideStart) / 0.3
+        if t >= 1 then
+          b.slideStart = nil
+          b:SetPoint("TOPLEFT", f, "TOPLEFT", b.baseX, b.baseY)
+        else
+          local e = 1 - (1 - t) * (1 - t) -- ease out
+          b:SetPoint("TOPLEFT", f, "TOPLEFT", b.baseX, b.baseY + b.slideFrom * (1 - e))
+        end
+      end
       local left = (b.flashEnd or 0) - GetTime()
       if left > 0 then b.flash:SetAlpha(math.min(1, left / 0.8)) elseif b.flash:GetAlpha() > 0 then b.flash:SetAlpha(0) end
     end)
@@ -515,7 +525,8 @@ local function GetLine()
   return l
 end
 
-local function Line(font, text, indent, r, g, b, data, icon, pinned, flashEnd, pop)
+local prevY, newY, slideNext = {}, {}, false -- content positions per line key, for the slide animation
+local function Line(font, text, indent, r, g, b, data, icon, pinned, flashEnd, pop, key)
   local l = GetLine()
   l.flashEnd = flashEnd or 0
   if not flashEnd then l.flash:SetAlpha(0) end
@@ -548,6 +559,15 @@ local function Line(font, text, indent, r, g, b, data, icon, pinned, flashEnd, p
   else l.icon:Hide() end
   l:ClearAllPoints()
   l:SetPoint("TOPLEFT", f, "TOPLEFT", indent, y + scrollOff); l:SetPoint("RIGHT", f, "RIGHT", -10, 0)
+  -- slide from the old spot when the list was reordered by new progress
+  l.baseX, l.baseY, l.slideStart = indent, y + scrollOff, nil
+  if key then
+    if slideNext and prevY[key] and prevY[key] ~= y then
+      l.slideFrom = prevY[key] - y; l.slideStart = GetTime()
+      l:SetPoint("TOPLEFT", f, "TOPLEFT", indent, y + scrollOff + l.slideFrom)
+    end
+    newY[key] = y
+  end
   local h = math.max(icon and 16 or 12, l.fs:GetStringHeight() or 12)
   l:SetHeight(h); l:EnableMouse(data ~= nil)
   -- only the text itself catches clicks; the empty rest of the row clicks through to the world
@@ -658,21 +678,51 @@ ProgressColor = function(o, who)
   local u = (t - 0.5) / 0.5; return Lerp(1, 0.45, u), Lerp(0.82, 1, u), Lerp(0.1, 0.3, u)
 end
 
+-- newest progress first: the quest that last got a kill/item jumps to the top (per owner: "me" or a friend)
+local topQuest = {}
+local function NoteProgress(owner, list)
+  local s = seen[owner]
+  if not s then return end
+  for _, q in ipairs(list) do
+    local prev = s[q.id]
+    if prev then
+      local up = q.complete and not prev.done
+      for i, o in ipairs(q.objs or {}) do
+        if prev[i] and o.have and o.have > prev[i] then up = true end
+      end
+      if up and topQuest[owner] ~= q.id then topQuest[owner] = q.id; slideNext = true end
+    end
+  end
+end
+local function TopFirst(owner, list)
+  local id = topQuest[owner]
+  if not id then return list end
+  for i, q in ipairs(list) do
+    if q.id == id then table.remove(list, i); table.insert(list, 1, q); break end
+  end
+  return list
+end
+
 local function QuestBlock(q, who, extra)
   local r, g, b = LevelColor(q.level)
   local lvl = tostring(q.level or 0) .. ((q.tag == ELITE or q.tag == "Elite") and "+" or "")
   local name = string.format("[%s] %s%s", lvl, q.title, q.tag and (" (" .. q.tag .. ")") or "")
+  local owner = who or "me"
+  local kb = owner .. ":" .. q.id .. ":"
   if not Line("GameFontNormal", name .. (extra or ""), 4, r, g, b, { q = q, who = who },
-    q.complete and ICON_DONE or ICON_PROGRESS, IsPinned(q, who)) then return false end
+    q.complete and ICON_DONE or ICON_PROGRESS, IsPinned(q, who), nil, nil, kb .. "t") then return false end
+  seen[owner] = seen[owner] or {}
   if q.complete then
-    Line("GameFontHighlightSmall", "- Ready for turn-in", 24, 0.3, 1, 0.3)
+    Line("GameFontHighlightSmall", "- Ready for turn-in", 24, 0.3, 1, 0.3, nil, nil, nil, nil, nil, kb .. "d")
+    local now = { done = true }
+    for i, o in ipairs(q.objs or {}) do now[i] = o.have end
+    seen[owner][q.id] = now
   elseif q.desc and q.desc ~= "" then
-    Line("GameFontHighlightSmall", q.desc, 24, 0.85, 0.85, 0.85)
+    Line("GameFontHighlightSmall", q.desc, 24, 0.85, 0.85, 0.85, nil, nil, nil, nil, nil, kb .. "d")
+    seen[owner][q.id] = { done = false }
   else
-    local owner = who or "me"
-    seen[owner] = seen[owner] or {}
     local prev = seen[owner][q.id]
-    local now = {}
+    local now = { done = false }
     for i, o in ipairs(q.objs or {}) do
       local key = owner .. ":" .. q.id .. ":" .. i
       now[i] = o.have
@@ -683,7 +733,7 @@ local function QuestBlock(q, who, extra)
       local fe = flashUntil[key]
       if fe and fe <= GetTime() then flashUntil[key] = nil; fe = nil end
       local r2, g2, b2 = ProgressColor(o, who)
-      Line("GameFontHighlightSmall", (o.done and CHECK or "- ") .. (o.text or ""), 24, r2, g2, b2, nil, nil, nil, fe, pop)
+      Line("GameFontHighlightSmall", (o.done and CHECK or "- ") .. (o.text or ""), 24, r2, g2, b2, nil, nil, nil, fe, pop, kb .. i)
     end
     seen[owner][q.id] = now
   end
@@ -721,6 +771,7 @@ function QuestMatesTracker_Refresh()
   if not db.utMin and not db.utSecMin then
     if tab == "mine" then
       local qs = MyQuests()
+      NoteProgress("me", qs); TopFirst("me", qs)
       if #qs == 0 then Line("GameFontHighlightSmall", "No tracked quests", 4, 0.6, 0.6, 0.6) end
       for i, q in ipairs(qs) do
         local shared = inParty and #API.FriendsOnQuest(q.id) or 0
@@ -732,6 +783,7 @@ function QuestMatesTracker_Refresh()
     else
       for _, who in ipairs(friends) do
         local fq = API.FriendQuests(who)
+        NoteProgress(who, fq); TopFirst(who, fq)
         local c = API.Color(who)
         local count = #fq
         y = y - 2
@@ -749,6 +801,7 @@ function QuestMatesTracker_Refresh()
     end
   end
   if not db.utMin and tab == "mine" then ProfessionSection() else pbar:Hide() end
+  prevY, newY, slideNext = newY, {}, false
   local total = math.max(0, -y - HEADH)
   local maxOff = math.max(0, total - viewH)
   if scrollOff > maxOff then scrollOff = maxOff; QuestMatesTracker_Refresh() return end
