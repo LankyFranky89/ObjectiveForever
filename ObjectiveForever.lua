@@ -418,6 +418,13 @@ local function GetLine()
     l.arrow:SetTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
     l.arrow:SetSize(12, 12); l.arrow:SetPoint("RIGHT", l, "TOPLEFT", -1, -8)
     l.arrow:Hide()
+    -- style C: the icon sits on a gold-rimmed disc
+    local CIRCLE = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
+    l.rim = l.icon:CreateTexture(nil, "BACKGROUND", nil, 1)
+    l.rim:SetTexture(CIRCLE); l.rim:SetSize(21, 21); l.rim:SetPoint("CENTER")
+    l.disc = l.icon:CreateTexture(nil, "BACKGROUND", nil, 2)
+    l.disc:SetTexture(CIRCLE); l.disc:SetSize(18, 18); l.disc:SetPoint("CENTER")
+    l.rim:Hide(); l.disc:Hide()
     l.icon:SetScript("OnClick", function(b)
       local d = b:GetParent().data
       if d and d.q then TogglePin(d.q, d.who) elseif d and d.recipe then b:GetParent():Click("LeftButton") end
@@ -527,11 +534,13 @@ local function Line(font, text, indent, r, g, b, data, icon, pinned, flashEnd, p
     else
       l.sel:SetVertexColor(c[1], c[2], c[3], 0.25)
     end
-    l.arrow:SetVertexColor(c[1], c[2], c[3])
-    l.sel:Show(); l.arrow:Show()
+    l.rim:SetVertexColor(c[1], c[2], c[3], 1)
+    l.disc:SetVertexColor(c[1] * 0.45, c[2] * 0.45, c[3] * 0.45, 1)
+    l.rim:Show(); l.disc:Show()
   else
-    l.sel:Hide(); l.arrow:Hide()
+    l.rim:Hide(); l.disc:Hide()
   end
+  l.sel:Hide(); l.arrow:Hide() -- style D (arrow + row highlight) is off
   if icon then
     l.icon.tex:SetTexture(icon); l.icon.tex:SetTexCoord(0, 1, 0, 1)
     if data and data.recipe then l.icon.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
